@@ -79,3 +79,4 @@ export { collectIp, readIp } from './collect';
 export { createStampFromSignals } from './create';
 export { signStamp } from './sign';
 export { verifyIpGeolocationStamp } from './verify';
+export { canonicalize } from './canonicalize';

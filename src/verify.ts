@@ -4,6 +4,7 @@ import type {
   LocationStamp,
   StampVerificationResult,
 } from '@decentralized-geo/astral-sdk/plugins';
+import { canonicalize } from './canonicalize';
 
 /**
  * Verify an ip-geolocation stamp's internal validity.
@@ -40,11 +41,12 @@ export async function verifyIpGeolocationStamp(
     signaturesValid = false;
     details.noSignatures = true;
   } else {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { signatures: _, ...unsigned } = stamp;
+    const message = canonicalize(unsigned);
+
     for (const sig of stamp.signatures) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { signatures: _, ...unsigned } = stamp;
-        const message = JSON.stringify(unsigned);
         const recovered = ethers.verifyMessage(message, sig.value);
         if (recovered.toLowerCase() !== sig.signer.value.toLowerCase()) {
           signaturesValid = false;
@@ -61,20 +63,21 @@ export async function verifyIpGeolocationStamp(
   }
 
   // --- Signal checks (IP geolocation-specific) ---
-  if (stamp.signals) {
-    const lat = stamp.signals.lat as number | undefined;
-    const lon = stamp.signals.lon as number | undefined;
-    const accuracy = stamp.signals.accuracyMeters as number | undefined;
-    const ip = stamp.signals.ip as string | undefined;
-
-    if (lat !== undefined && (lat < -90 || lat > 90)) {
+  const loc = stamp.location as { coordinates?: number[] } | undefined;
+  if (loc?.coordinates) {
+    const [lon, lat] = loc.coordinates;
+    if (lat < -90 || lat > 90) {
       signalsConsistent = false;
       details.invalidLatitude = lat;
     }
-    if (lon !== undefined && (lon < -180 || lon > 180)) {
+    if (lon < -180 || lon > 180) {
       signalsConsistent = false;
       details.invalidLongitude = lon;
     }
+  }
+  if (stamp.signals) {
+    const accuracy = stamp.signals.accuracyMeters as number | undefined;
+    const ip = stamp.signals.ip as string | undefined;
     // IP geolocation should report at least 25km accuracy — anything
     // claiming sub-km accuracy from IP alone is implausible
     if (accuracy !== undefined && accuracy < 1000) {
@@ -82,7 +85,7 @@ export async function verifyIpGeolocationStamp(
       details.suspiciousAccuracy = accuracy;
     }
     // Basic IP format check
-    if (ip !== undefined && !/^\d{1,3}(\.\d{1,3}){3}$|:/.test(ip)) {
+    if (ip !== undefined && !/^\d{1,3}(\.\d{1,3}){3}$|^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/.test(ip)) {
       signalsConsistent = false;
       details.invalidIpFormat = ip;
     }

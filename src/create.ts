@@ -34,8 +34,6 @@ export function createStampFromSignals(
       city: reading.city,
       region: reading.region,
       country: reading.country,
-      lat: reading.lat,
-      lon: reading.lon,
     },
   };
 }

@@ -2,6 +2,7 @@
 import { ethers } from 'ethers';
 import type { LocationStamp } from '@decentralized-geo/astral-sdk/plugins';
 import { verifyIpGeolocationStamp } from '../verify';
+import { canonicalize } from '../canonicalize';
 
 const TEST_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 
@@ -20,8 +21,6 @@ async function makeSignedStamp(
     pluginVersion: '0.1.0',
     signals: {
       source: 'ip-geolocation',
-      lat: 40.7484,
-      lon: -73.9857,
       accuracyMeters: 25000,
       ip: '1.2.3.4',
       city: 'New York',
@@ -31,7 +30,7 @@ async function makeSignedStamp(
 
   const { signatures: _, ...unsignedClean } = unsigned as LocationStamp;
   void _;
-  const message = JSON.stringify(unsignedClean);
+  const message = canonicalize(unsignedClean);
   const sigValue = await wallet.signMessage(message);
 
   return {
@@ -54,30 +53,39 @@ describe('ip-geolocation verification', () => {
     expect(result.valid).toBe(true);
   });
 
+  it('detects tampering after signing', async () => {
+    const stamp = await makeSignedStamp();
+    stamp.signals = { ...stamp.signals, ip: '9.9.9.9' };
+    const result = await verifyIpGeolocationStamp(stamp);
+    expect(result.signaturesValid).toBe(false);
+    expect(result.valid).toBe(false);
+  });
+
   it('rejects stamp with wrong plugin name', async () => {
     const stamp = await makeSignedStamp({ plugin: 'not-ip' });
     const result = await verifyIpGeolocationStamp(stamp);
     expect(result.structureValid).toBe(false);
+    expect(result.valid).toBe(false);
   });
 
   it('rejects stamp with no signatures', async () => {
     const stamp = await makeSignedStamp({ signatures: [] });
     const result = await verifyIpGeolocationStamp(stamp);
     expect(result.signaturesValid).toBe(false);
+    expect(result.valid).toBe(false);
   });
 
   it('detects suspiciously precise accuracy from IP', async () => {
     const stamp = await makeSignedStamp({
       signals: {
         source: 'ip-geolocation',
-        lat: 40.7484,
-        lon: -73.9857,
         accuracyMeters: 500, // sub-km from IP is suspicious
         ip: '1.2.3.4',
       },
     });
     const result = await verifyIpGeolocationStamp(stamp);
     expect(result.signalsConsistent).toBe(false);
+    expect(result.valid).toBe(false);
     expect(result.details.suspiciousAccuracy).toBe(500);
   });
 
@@ -85,29 +93,46 @@ describe('ip-geolocation verification', () => {
     const stamp = await makeSignedStamp({
       signals: {
         source: 'ip-geolocation',
-        lat: 40.7484,
-        lon: -73.9857,
         accuracyMeters: 25000,
         ip: 'not-an-ip',
       },
     });
     const result = await verifyIpGeolocationStamp(stamp);
     expect(result.signalsConsistent).toBe(false);
+    expect(result.valid).toBe(false);
     expect(result.details.invalidIpFormat).toBe('not-an-ip');
+  });
+
+  it('rejects strings that merely contain colons', async () => {
+    const stamp = await makeSignedStamp({
+      signals: {
+        source: 'ip-geolocation',
+        accuracyMeters: 25000,
+        ip: 'foo:bar',
+      },
+    });
+    const result = await verifyIpGeolocationStamp(stamp);
+    expect(result.signalsConsistent).toBe(false);
+    expect(result.details.invalidIpFormat).toBe('foo:bar');
   });
 
   it('accepts IPv6 addresses', async () => {
     const stamp = await makeSignedStamp({
       signals: {
         source: 'ip-geolocation',
-        lat: 40.7484,
-        lon: -73.9857,
         accuracyMeters: 25000,
         ip: '2001:db8::1',
       },
     });
     const result = await verifyIpGeolocationStamp(stamp);
-    // IPv6 contains colons, so the regex should pass
     expect(result.signalsConsistent).toBe(true);
+  });
+
+  it('verifies stamps survive JSON round-trip', async () => {
+    const stamp = await makeSignedStamp();
+    const roundTripped = JSON.parse(JSON.stringify(stamp)) as LocationStamp;
+    const result = await verifyIpGeolocationStamp(roundTripped);
+    expect(result.signaturesValid).toBe(true);
+    expect(result.valid).toBe(true);
   });
 });
